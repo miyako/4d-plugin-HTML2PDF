@@ -13,8 +13,13 @@ if(WIN32)
 endif()
 
 # --- Third-party libraries ---
+# litehtml uses constexpr with std::abs which MSVC C++17 rejects (C3615).
+# Build litehtml as C++20 on MSVC to work around this.
 set(LITEHTML_DIR "${CMAKE_SOURCE_DIR}/../deps/litehtml")
 add_subdirectory("${LITEHTML_DIR}" "${CMAKE_BINARY_DIR}/litehtml")
+if(MSVC)
+    set_target_properties(litehtml PROPERTIES CXX_STANDARD 20)
+endif()
 
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(LIBHPDF_EXAMPLES OFF CACHE BOOL "" FORCE)
