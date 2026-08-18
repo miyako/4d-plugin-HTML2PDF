@@ -64,8 +64,13 @@ void HTML2PDF_Command(PA_PluginParameters params) {
         return;
     }
     
-    // Convert
+    // Convert — set base URL for CSS resolution
     pdf_container container;
+    auto sep = htmlPath.rfind('/');
+#ifdef _WIN32
+    if (sep == std::string::npos) sep = htmlPath.rfind('\\');
+#endif
+    if (sep != std::string::npos) container.set_base_url(htmlPath.substr(0, sep).c_str());
     bool ok = container.render_to_pdf(html, pdfPath);
     
     PA_ReturnLong(params, ok ? 0 : 3);

@@ -60,6 +60,7 @@ private:
     int m_current_page_offset_y;
     std::map<litehtml::uint_ptr, font_info*> m_fonts;
     litehtml::uint_ptr m_next_font_id;
+    std::string m_base_url;
 };
 
 #endif

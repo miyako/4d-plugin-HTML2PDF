@@ -3,6 +3,8 @@
 #include <cmath>
 #include <algorithm>
 #include <cctype>
+#include <fstream>
+#include <sstream>
 
 pdf_container::pdf_container()
     : m_pdf(nullptr), m_current_page(nullptr),
@@ -193,7 +195,9 @@ void pdf_container::draw_linear_gradient(litehtml::uint_ptr, const litehtml::bac
 void pdf_container::draw_radial_gradient(litehtml::uint_ptr, const litehtml::background_layer&, const litehtml::background_layer::radial_gradient&) {}
 void pdf_container::draw_conic_gradient(litehtml::uint_ptr, const litehtml::background_layer&, const litehtml::background_layer::conic_gradient&) {}
 void pdf_container::set_caption(const char*) {}
-void pdf_container::set_base_url(const char*) {}
+void pdf_container::set_base_url(const char* base_url) {
+    if (base_url) m_base_url = base_url;
+}
 void pdf_container::link(const std::shared_ptr<litehtml::document>&, const litehtml::element::ptr&) {}
 void pdf_container::on_anchor_click(const char*, const litehtml::element::ptr&) {}
 void pdf_container::on_mouse_event(const litehtml::element::ptr&, litehtml::mouse_event) {}
@@ -202,7 +206,23 @@ void pdf_container::transform_text(std::string& text, litehtml::text_transform t
     if (tt == litehtml::text_transform_uppercase) std::transform(text.begin(), text.end(), text.begin(), ::toupper);
     else if (tt == litehtml::text_transform_lowercase) std::transform(text.begin(), text.end(), text.begin(), ::tolower);
 }
-void pdf_container::import_css(std::string& text, const std::string&, std::string&) { text.clear(); }
+void pdf_container::import_css(std::string& text, const std::string& url, std::string& baseurl) {
+    text.clear();
+    std::string path = url;
+    // Resolve relative to base URL (directory)
+    if (!path.empty() && path[0] != '/' && !m_base_url.empty()) {
+        path = m_base_url + "/" + path;
+    }
+    std::ifstream f(path);
+    if (f.is_open()) {
+        std::stringstream ss;
+        ss << f.rdbuf();
+        text = ss.str();
+        // Set baseurl for nested @import
+        auto pos = path.rfind('/');
+        if (pos != std::string::npos) baseurl = path.substr(0, pos);
+    }
+}
 void pdf_container::set_clip(const litehtml::position&, const litehtml::border_radiuses&) {}
 void pdf_container::del_clip() {}
 void pdf_container::get_viewport(litehtml::position& vp) const {
