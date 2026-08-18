@@ -1,0 +1,6 @@
+{
+    "Tests": {
+        "methods": ["test_all", "test_HTML2PDF"]
+    },
+    "trash": {}
+}
