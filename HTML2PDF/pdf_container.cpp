@@ -241,7 +241,28 @@ void pdf_container::set_caption(const char*) {}
 void pdf_container::set_base_url(const char* base_url) {
     if (base_url) m_base_url = base_url;
 }
-void pdf_container::link(const std::shared_ptr<litehtml::document>&, const litehtml::element::ptr&) {}
+void pdf_container::link(const std::shared_ptr<litehtml::document>& doc, const litehtml::element::ptr& el) {
+    if (!doc || !el) return;
+    const char* rel = el->get_attr("rel");
+    const char* href = el->get_attr("href");
+    if (!rel || !href) return;
+    std::string rel_str(rel);
+    if (rel_str != "stylesheet") return;
+    
+    std::string path(href);
+    if (!path.empty() && path[0] != '/' && !m_base_url.empty()) {
+        path = m_base_url + "/" + path;
+    }
+    std::ifstream f(path);
+    if (f.is_open()) {
+        std::stringstream ss;
+        ss << f.rdbuf();
+        std::string css = ss.str();
+        if (!css.empty()) {
+            doc->add_stylesheet(css.c_str(), href, nullptr);
+        }
+    }
+}
 void pdf_container::on_anchor_click(const char*, const litehtml::element::ptr&) {}
 void pdf_container::on_mouse_event(const litehtml::element::ptr&, litehtml::mouse_event) {}
 void pdf_container::set_cursor(const char*) {}
