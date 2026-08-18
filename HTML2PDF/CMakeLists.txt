@@ -39,6 +39,7 @@ add_subdirectory("${LIBHARU_DIR}" "${CMAKE_BINARY_DIR}/libharu/include")
 set(PLUGIN_SOURCES
     ${PLUGIN_NAME}-4dplugin.cpp
     pdf_container.cpp
+    stb_impl.c
     "${SDK_DIR}/4DPluginAPI.c"
 )
 

@@ -5,6 +5,7 @@
 #include <cctype>
 #include <fstream>
 #include <sstream>
+#include "stb_image.h"
 
 pdf_container::pdf_container()
     : m_pdf(nullptr), m_current_page(nullptr),
@@ -13,6 +14,7 @@ pdf_container::pdf_container()
 
 pdf_container::~pdf_container() {
     for (auto& p : m_fonts) delete p.second;
+    m_images.clear();
 }
 
 std::string pdf_container::map_font_name(const std::string& family, bool bold, bool italic) {
@@ -151,6 +153,9 @@ bool pdf_container::render_to_pdf(const std::string& html, const std::string& pd
     m_pdf = HPDF_New(nullptr, nullptr);
     if (!m_pdf) return false;
 
+    // Reset cached HPDF_Image handles (they belong to the previous m_pdf)
+    for (auto& kv : m_images) kv.second.hpdf_image = nullptr;
+
     auto doc = litehtml::document::createFromString(html.c_str(), this);
     if (!doc) { HPDF_Free(m_pdf); m_pdf = nullptr; return false; }
 
@@ -188,9 +193,47 @@ void pdf_container::draw_list_marker(litehtml::uint_ptr hdc, const litehtml::lis
     HPDF_Page_Fill(m_current_page);
 }
 
-void pdf_container::load_image(const char*, const char*, bool) {}
-void pdf_container::get_image_size(const char*, const char*, litehtml::size& sz) { sz.width = 0; sz.height = 0; }
-void pdf_container::draw_image(litehtml::uint_ptr, const litehtml::background_layer&, const std::string&, const std::string&) {}
+void pdf_container::load_image(const char* src, const char* baseurl, bool) {
+    if (!src || !*src) return;
+    std::string path = src;
+    if (!path.empty() && path[0] != '/') {
+        std::string base = (baseurl && *baseurl) ? baseurl : m_base_url;
+        if (!base.empty()) path = base + "/" + path;
+    }
+    if (m_images.count(src)) return;
+    int w = 0, h = 0, channels = 0;
+    unsigned char* data = stbi_load(path.c_str(), &w, &h, &channels, 3);
+    if (!data) return;
+    image_info info;
+    info.width = w;
+    info.height = h;
+    info.pixel_data.assign(data, data + w * h * 3);
+    info.hpdf_image = nullptr;
+    stbi_image_free(data);
+    m_images[src] = std::move(info);
+}
+void pdf_container::get_image_size(const char* src, const char*, litehtml::size& sz) {
+    auto it = m_images.find(src ? src : "");
+    if (it != m_images.end()) { sz.width = it->second.width; sz.height = it->second.height; }
+    else { sz.width = 0; sz.height = 0; }
+}
+void pdf_container::draw_image(litehtml::uint_ptr, const litehtml::background_layer& layer, const std::string& url, const std::string&) {
+    if (!m_current_page || !m_pdf) return;
+    auto it = m_images.find(url);
+    if (it == m_images.end()) return;
+    auto& img = it->second;
+    if (!img.hpdf_image) {
+        img.hpdf_image = HPDF_LoadRawImageFromMem(m_pdf, img.pixel_data.data(),
+            img.width, img.height, HPDF_CS_DEVICE_RGB, 8);
+        if (!img.hpdf_image) return;
+    }
+    float x = (float)layer.border_box.x;
+    float w = (float)layer.border_box.width;
+    float h = (float)layer.border_box.height;
+    float y_top = (float)(layer.border_box.y - m_current_page_offset_y);
+    float y = m_page_height - y_top - h;
+    HPDF_Page_DrawImage(m_current_page, img.hpdf_image, x, y, w, h);
+}
 void pdf_container::draw_linear_gradient(litehtml::uint_ptr, const litehtml::background_layer&, const litehtml::background_layer::linear_gradient&) {}
 void pdf_container::draw_radial_gradient(litehtml::uint_ptr, const litehtml::background_layer&, const litehtml::background_layer::radial_gradient&) {}
 void pdf_container::draw_conic_gradient(litehtml::uint_ptr, const litehtml::background_layer&, const litehtml::background_layer::conic_gradient&) {}

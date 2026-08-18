@@ -5,6 +5,15 @@
 #include "hpdf.h"
 #include <string>
 #include <map>
+#include <vector>
+#include <cstdint>
+
+struct image_info {
+    int width;
+    int height;
+    std::vector<uint8_t> pixel_data; // RGB, no alpha
+    HPDF_Image hpdf_image;           // cached libharu image (created per-PDF)
+};
 
 struct font_info {
     std::string hpdf_font_name;
@@ -61,6 +70,7 @@ private:
     std::map<litehtml::uint_ptr, font_info*> m_fonts;
     litehtml::uint_ptr m_next_font_id;
     std::string m_base_url;
+    std::map<std::string, image_info> m_images;
 };
 
 #endif
