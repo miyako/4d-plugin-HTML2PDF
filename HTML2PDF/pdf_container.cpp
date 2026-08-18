@@ -120,12 +120,9 @@ void pdf_container::draw_text(litehtml::uint_ptr hdc, const char* text, litehtml
 }
 
 void pdf_container::draw_solid_fill(litehtml::uint_ptr hdc, const litehtml::background_layer& layer, const litehtml::web_color& color) {
-    if (!m_current_page || color.alpha == 0) return;
-    float x = (float)layer.clip_box.x;
-    float y = m_page_height - ((float)layer.clip_box.y - m_current_page_offset_y) - (float)layer.clip_box.height;
-    HPDF_Page_SetRGBFill(m_current_page, color.red / 255.0f, color.green / 255.0f, color.blue / 255.0f);
-    HPDF_Page_Rectangle(m_current_page, x, y, (float)layer.clip_box.width, (float)layer.clip_box.height);
-    HPDF_Page_Fill(m_current_page);
+    // Disabled — dark-mode CSS often produces unwanted fills since litehtml
+    // doesn't execute JS (e.g. data-theme="light" never gets set).
+    (void)hdc; (void)layer; (void)color;
 }
 
 void pdf_container::draw_borders(litehtml::uint_ptr hdc, const litehtml::borders& borders,
