@@ -32,6 +32,14 @@ endif()
 
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(LIBHPDF_EXAMPLES OFF CACHE BOOL "" FORCE)
+if(APPLE)
+    # Use a vendored, statically-linked universal (arm64 + x86_64) libpng so the
+    # bundle has no dependency on Homebrew (whose paths differ per architecture
+    # and are not guaranteed to exist on end-user machines).
+    set(PNG_DIR "${CMAKE_SOURCE_DIR}/../deps/libpng16")
+    set(PNG_PNG_INCLUDE_DIR "${PNG_DIR}" CACHE PATH "Vendored libpng16 include dir" FORCE)
+    set(PNG_LIBRARY "${PNG_DIR}/libpng16.a" CACHE FILEPATH "Vendored universal static libpng16" FORCE)
+endif()
 set(LIBHARU_DIR "${CMAKE_SOURCE_DIR}/../deps/libharu")
 add_subdirectory("${LIBHARU_DIR}" "${CMAKE_BINARY_DIR}/libharu/include")
 
