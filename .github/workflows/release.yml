@@ -1,14 +1,7 @@
-name: Build & Release
+name: Build
 
 on:
-  push:
-    tags:
-      - 'v*.*.*'
   workflow_dispatch:
-    inputs:
-      tag:
-        description: Existing tag to build (e.g. v2.3.0)
-        required: true
 
 permissions:
   contents: write
@@ -16,24 +9,31 @@ permissions:
 env:
   PRODUCT_NAME: HTML2PDF
   MACOS_DEPLOYMENT_TARGET: '10.13'
+  PYTHONDONTWRITEBYTECODE: '1'
+  GIT_CONFIG_COUNT: '1'
+  GIT_CONFIG_KEY_0: core.autocrlf
+  GIT_CONFIG_VALUE_0: 'false'
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: html2pdf-publication
   cancel-in-progress: false
 
 jobs:
-
   version:
     runs-on: ubuntu-latest
     outputs:
-      tag: ${{ steps.set.outputs.tag }}
-      version: ${{ steps.set.outputs.version }}
+      tag: ${{ steps.source.outputs.tag }}
+      version: ${{ steps.source.outputs.version }}
     steps:
-      - id: set
-        run: |
-          TAG="${{ inputs.tag || github.ref_name }}"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          submodules: recursive
+      - name: Validate source and publication absence before native work
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/release.py preflight --sha "$GITHUB_SHA"
 
   build-windows:
     name: Build Windows (x64)
@@ -42,23 +42,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.version.outputs.tag }}
+          ref: ${{ github.sha }}
           submodules: recursive
-
+      - name: Check clean selected source and availability before native work
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python .github/scripts/release.py preflight --sha "$env:GITHUB_SHA"
+          if ($LASTEXITCODE -ne 0) { throw "Windows preflight failed" }
       - name: build with CMake
         shell: pwsh
         run: |
-          cd ${{ env.PRODUCT_NAME }}
-          mkdir cmake-build; cd cmake-build
-          cmake .. -A x64
-          cmake --build . --config Release
-
+          python .github/scripts/native.py build-windows
+          if ($LASTEXITCODE -ne 0) { throw "Windows immutable-copy CMake build failed" }
       - name: upload windows binaries
         uses: actions/upload-artifact@v4
         with:
           name: windows-binaries
-          path: |
-            ${{ env.PRODUCT_NAME }}/${{ env.PRODUCT_NAME }}-test/Plugins/${{ env.PRODUCT_NAME }}/Contents/Windows64/${{ env.PRODUCT_NAME }}.4DX
+          path: HTML2PDF/cmake-build/source/HTML2PDF/HTML2PDF-test/Plugins/HTML2PDF/Contents/Windows64/HTML2PDF.4DX
           if-no-files-found: error
 
   build-macos:
@@ -68,104 +70,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.version.outputs.tag }}
+          ref: ${{ github.sha }}
           submodules: recursive
-
+      - name: Check clean selected source and availability before native work
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/release.py preflight --sha "$GITHUB_SHA"
       - name: download windows binaries
         uses: actions/download-artifact@v4
         with:
           name: windows-binaries
           path: winbuild
-
       - name: import Developer ID certificate
         env:
           CERT_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE }}
           CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERTIFICATE_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-        run: |
-          set -euo pipefail
-          KEYCHAIN_PATH="$RUNNER_TEMP/build.keychain-db"
-          CERT_PATH="$RUNNER_TEMP/certificate.p12"
-
-          echo -n "$CERT_BASE64" | base64 --decode -o "$CERT_PATH"
-
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security import "$CERT_PATH" -P "$CERT_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-
-          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
-
+        run: bash .github/scripts/native.sh import-certificate
       - name: store notarytool credentials
         env:
           APPLE_ID: ${{ secrets.NOTARYTOOL_APPLE_ID }}
           TEAM_ID: ${{ secrets.NOTARYTOOL_TEAM_ID }}
           APP_PASSWORD: ${{ secrets.NOTARYTOOL_PASSWORD }}
-        run: |
-          xcrun notarytool store-credentials "notarytool-profile" \
-            --apple-id "$APPLE_ID" \
-            --team-id "$TEAM_ID" \
-            --password "$APP_PASSWORD" \
-            --keychain "$KEYCHAIN_PATH"
-
+        run: bash .github/scripts/native.sh store-credentials
       - name: build macOS plugin (universal)
-        run: |
-          cd ${{ env.PRODUCT_NAME }}
-          mkdir -p cmake-build && cd cmake-build
-          cmake .. -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET="${{ env.MACOS_DEPLOYMENT_TARGET }}"
-          cmake --build .
-
-      - name: verify universal binary
-        run: |
-          set -euo pipefail
-          BIN="${{ env.PRODUCT_NAME }}/${{ env.PRODUCT_NAME }}-test/Plugins/${{ env.PRODUCT_NAME }}.bundle/Contents/MacOS/${{ env.PRODUCT_NAME }}"
-          lipo -info "$BIN"
-          lipo -info "$BIN" | grep -q "arm64" && lipo -info "$BIN" | grep -q "x86_64"
-
-      - name: merge Windows binaries into the bundle
-        run: |
-          set -euo pipefail
-          BUNDLE="${{ env.PRODUCT_NAME }}/${{ env.PRODUCT_NAME }}-test/Plugins/${{ env.PRODUCT_NAME }}.bundle"
-          mkdir -p "$BUNDLE/Contents/Windows64"
-          cp "winbuild/${{ env.PRODUCT_NAME }}.4DX" "$BUNDLE/Contents/Windows64/${{ env.PRODUCT_NAME }}.4DX"
-          echo "BUNDLE_PATH=$BUNDLE" >> "$GITHUB_ENV"
-
-      - name: codesign
-        run: |
-          set -euo pipefail
-          IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" \
-            | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.*)".*/\1/')
-          echo "Signing with: $IDENTITY"
-          codesign --verbose --deep --timestamp --force --options=runtime \
-            --sign "$IDENTITY" "$BUNDLE_PATH"
-          codesign --verify --deep --strict --verbose=2 "$BUNDLE_PATH"
-
+        run: bash .github/scripts/native.sh build
+      - name: merge Windows binaries and verify unsigned metadata and exact resources
+        run: bash .github/scripts/native.sh merge
+      - name: codesign and strictly verify
+        run: bash .github/scripts/native.sh sign
       - name: package, notarize & staple
-        run: |
-          set -euo pipefail
-          VERSION="${{ needs.version.outputs.version }}"
-          ZIP_PATH="${{ env.PRODUCT_NAME }}-${VERSION}.zip"
-          DMG_PATH="${{ env.PRODUCT_NAME }}-${VERSION}.dmg"
-
-          ditto -c -k --keepParent "$BUNDLE_PATH" "$ZIP_PATH"
-          hdiutil create -format UDBZ -volname "${{ env.PRODUCT_NAME }}" -srcfolder "$BUNDLE_PATH" "$DMG_PATH"
-
-          xcrun notarytool submit "$ZIP_PATH" --keychain-profile "notarytool-profile" --keychain "$KEYCHAIN_PATH" --wait
-          xcrun notarytool submit "$DMG_PATH" --keychain-profile "notarytool-profile" --keychain "$KEYCHAIN_PATH" --wait
-          xcrun stapler staple "$DMG_PATH"
-
-          echo "ZIP_PATH=$ZIP_PATH" >> "$GITHUB_ENV"
-          echo "DMG_PATH=$DMG_PATH" >> "$GITHUB_ENV"
-
-      - name: create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.version.outputs.tag }}
-          name: ${{ needs.version.outputs.tag }}
-          files: |
-            ${{ env.ZIP_PATH }}
-            ${{ env.DMG_PATH }}
+        run: bash .github/scripts/native.sh package
+      - name: Revalidate retained outputs and create only a new tag, release and assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/release.py publish --sha "$GITHUB_SHA" "$ZIP_PATH" "$DMG_PATH"
