@@ -25,6 +25,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.sha }}
           submodules: recursive
 
       - name: Parse 4D version from .4DProject
@@ -46,8 +47,8 @@ jobs:
             version="${major} R${r_version}"
           fi
           branch="${major}.x"
-          echo "branch=${branch}" >> $GITHUB_OUTPUT
-          echo "version=${version}" >> $GITHUB_OUTPUT
+          echo "branch=${branch}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - name: Download tool4d
         shell: bash
@@ -81,7 +82,7 @@ jobs:
           tool4d.app/Contents/MacOS/tool4d \
             --dataless \
             --startup-method=test_all \
-            --project=$(pwd)/HTML2PDF/HTML2PDF-test/Project/HTML2PDF.4DProject
+            --project="$(pwd)/HTML2PDF/HTML2PDF-test/Project/HTML2PDF.4DProject"
 
       - name: Run tests (Windows)
         if: runner.os == 'Windows'
